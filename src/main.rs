@@ -1,5 +1,4 @@
-use std::error::Error;
-use std::sync::Mutex;
+mod db;
 
 use actix_web::middleware::Logger;
 use actix_web::web::{self, Data, Json, Path};
@@ -10,44 +9,52 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::UdpSocket;
 
-type Db = Mutex<Vec<Host>>;
+use db::Db;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[actix_rt::main]
-async fn main() -> Result<(), impl Error> {
+async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     env_logger::init_from_env(Env::new().default_filter_or("info"));
 
     let host = std::env::var("VIGIL_HTTP_HOST").unwrap_or_else(|_| "0.0.0.0".to_owned());
     let port = std::env::var("VIGIL_HTTP_PORT").map_or(8080, |v| v.parse().unwrap());
+    let db_url = std::env::var("VIGIL_DB_URL").unwrap_or_else(|_| "sqlite://vigil.db".to_owned());
 
     log::info!("Starting server at http://{}:{}", host, port);
 
-    let id = Data::new(Mutex::new(0));
-    let db = Data::new(Db::new(vec![]));
+    let db = Data::new(db::connect(&db_url).await?);
 
-    HttpServer::new(move || {
-        App::new()
-            .wrap(Logger::default())
-            .app_data(Data::clone(&id))
-            .app_data(Data::clone(&db))
-            .route("/", web::get().to(index))
-            .service(
-                web::resource("/api/hosts")
-                    .route(web::get().to(get_hosts))
-                    .route(web::post().to(create_host)),
-            )
-            .service(
-                web::resource("/api/hosts/{id}")
-                    .route(web::get().to(get_host))
-                    .route(web::patch().to(update_host))
-                    .route(web::delete().to(delete_host)),
-            )
-            .route("/api/hosts/{id}/wake", web::post().to(wake_host))
+    HttpServer::new({
+        let db = Data::clone(&db);
+        move || {
+            App::new()
+                .wrap(Logger::default())
+                .app_data(Data::clone(&db))
+                .route("/", web::get().to(index))
+                .service(
+                    web::resource("/api/hosts")
+                        .route(web::get().to(get_hosts))
+                        .route(web::post().to(create_host)),
+                )
+                .service(
+                    web::resource("/api/hosts/{id}")
+                        .route(web::get().to(get_host))
+                        .route(web::patch().to(update_host))
+                        .route(web::delete().to(delete_host)),
+                )
+                .route("/api/hosts/{id}/wake", web::post().to(wake_host))
+        }
     })
     .bind(format!("{}:{}", host, port))?
     .run()
-    .await
+    .await?;
+
+    db.close().await;
+
+    Ok(())
 }
 
 async fn index() -> HttpResponse {
@@ -63,8 +70,13 @@ struct Host {
 }
 
 async fn get_hosts(db: Data<Db>) -> HttpResponse {
-    let hosts = db.lock().unwrap();
-    HttpResponse::Ok().json(&*hosts)
+    // TODO: Actual error handling 😦
+    match db::Host::get_all(&*db).await {
+        Ok(hosts) => HttpResponse::Ok().json(hosts),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": e.to_string()
+        })),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,94 +86,67 @@ struct HostCreate {
     mac_address: String,
 }
 
-async fn create_host(model: Json<HostCreate>, id: Data<Mutex<i32>>, db: Data<Db>) -> HttpResponse {
+async fn create_host(model: Json<HostCreate>, db: Data<Db>) -> HttpResponse {
     let model = model.into_inner();
-    let db = db.into_inner();
-    let mut hosts = db.lock().unwrap();
-
-    let id = {
-        let mut id = id.lock().unwrap();
-        let next_id = *id + 1;
-        *id = next_id;
-        next_id
-    };
-
-    hosts.push(Host {
-        id,
-        name: model.name,
-        ip_address: model.ip_address,
-        mac_address: model.mac_address,
-    });
-
-    HttpResponse::Ok().json(hosts.last())
-}
-
-async fn get_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
-    let (id,) = *params;
-    let db = db.into_inner();
-    let hosts = db.lock().unwrap();
-    match hosts.iter().find(|h| h.id == id) {
-        Some(host) => HttpResponse::Ok().json(host),
-        None => HttpResponse::NotFound().json(json!({
-            "error": "No host found with the given id"
+    let host = db::Host::create(&*db, &model.name, &model.ip_address, &model.mac_address).await;
+    match host {
+        Ok(host) => HttpResponse::Ok().json(host),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": e.to_string()
         })),
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct HostUpdate {
-    name: Option<String>,
-    ip_address: Option<String>,
-    mac_address: Option<String>,
+async fn get_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
+    let (id,) = *params;
+    match db::Host::get_by_id(&*db, id).await {
+        Ok(host) => HttpResponse::Ok().json(host),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": e.to_string()
+        })),
+    }
 }
 
-async fn update_host(params: Path<(i32,)>, model: Json<HostUpdate>, db: Data<Db>) -> HttpResponse {
+async fn update_host(
+    params: Path<(i32,)>,
+    update: Json<db::HostUpdate>,
+    db: Data<Db>,
+) -> HttpResponse {
     let (id,) = *params;
-    let model = model.into_inner();
-    let db = db.into_inner();
-    let mut hosts = db.lock().unwrap();
+    let update = update.into_inner();
 
-    let host = match hosts.iter_mut().find(|h| h.id == id) {
-        Some(host) => host,
-        None => return HttpResponse::NotFound().finish(),
-    };
-
-    if let Some(name) = model.name {
-        host.name = name;
+    match db::Host::update(&*db, id, update).await {
+        Ok(host) => HttpResponse::Ok().json(host),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": e.to_string()
+        })),
     }
-
-    if let Some(ip_address) = model.ip_address {
-        host.ip_address = ip_address;
-    }
-
-    if let Some(mac_address) = model.mac_address {
-        host.mac_address = mac_address;
-    }
-
-    HttpResponse::Ok().json(host)
 }
 
 async fn delete_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
     let (id,) = *params;
-    let db = db.into_inner();
-    let mut hosts = db.lock().unwrap();
-    hosts.retain(|h| h.id != id);
-    HttpResponse::NoContent().finish()
+    match db::Host::delete(&*db, id).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": e.to_string()
+        })),
+    }
 }
 
 async fn wake_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
     let (id,) = *params;
-    let db = db.into_inner();
-    let hosts = db.lock().unwrap();
-    let host = hosts.iter().find(|h| h.id == id).unwrap();
-
-    let m = host.mac_address.clone();
-
-    drop(hosts);
+    let host = match db::Host::get_by_id(&*db, id).await {
+        Ok(host) => host,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "error": e.to_string()
+            }))
+        }
+    };
 
     let mut mac_address = [0u8; 6];
 
-    for (i, v) in m.split(':').enumerate() {
+    for (i, v) in host.mac_address.split(':').enumerate() {
         mac_address[i] = u8::from_str_radix(v, 16).unwrap();
     }
 

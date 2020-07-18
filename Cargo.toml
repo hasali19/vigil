@@ -19,4 +19,4 @@ tokio = { version = "0.2.21", features = ["udp"] }
 [dependencies.sqlx]
 version = "0.3.5"
 default-features = false
-features = ["runtime-tokio", "sqlite"]
+features = ["runtime-tokio", "sqlite", "macros"]
