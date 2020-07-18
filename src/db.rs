@@ -102,7 +102,7 @@ impl Host {
 
         let count = sqlx::query(&query).bind_all(args).execute(&db.0).await?;
         if count == 0 {
-            return Err("Failed to update host")?;
+            return Err("Failed to update host".into());
         }
 
         Self::get_by_id(db, id).await
