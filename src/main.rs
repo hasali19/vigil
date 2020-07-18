@@ -8,6 +8,7 @@ use actix_web::{App, HttpResponse, HttpServer};
 use env_logger::Env;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::net::UdpSocket;
 
 type Db = Mutex<Vec<Host>>;
 
@@ -42,6 +43,7 @@ async fn main() -> Result<(), impl Error> {
                     .route(web::patch().to(update_host))
                     .route(web::delete().to(delete_host)),
             )
+            .route("/api/hosts/{id}/wake", web::post().to(wake_host))
     })
     .bind(format!("{}:{}", host, port))?
     .run()
@@ -145,4 +147,49 @@ async fn delete_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
     let mut hosts = db.lock().unwrap();
     hosts.retain(|h| h.id != id);
     HttpResponse::NoContent().finish()
+}
+
+async fn wake_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
+    let (id,) = *params;
+    let db = db.into_inner();
+    let hosts = db.lock().unwrap();
+    let host = hosts.iter().find(|h| h.id == id).unwrap();
+
+    let m = host.mac_address.clone();
+
+    drop(hosts);
+
+    let mut mac_address = [0u8; 6];
+
+    for (i, v) in m.split(':').enumerate() {
+        mac_address[i] = u8::from_str_radix(v, 16).unwrap();
+    }
+
+    let mut packet = [0u8; 102];
+
+    // 6 bytes of 0xff...
+    for i in 0..6 {
+        packet[i] = 0xff;
+    }
+
+    // ...followed by 16 repetitions of the target mac address
+    for i in 0..16 {
+        for j in 0..6 {
+            packet[6 + i * 6 + j] = mac_address[j];
+        }
+    }
+
+    let mut socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+
+    socket.set_broadcast(true).unwrap();
+    socket
+        .send_to(
+            &packet,
+            // std::net::SocketAddrV4::new(std::net::Ipv4Addr::BROADCAST, 7),
+            "192.168.1.255:9",
+        )
+        .await
+        .unwrap();
+
+    HttpResponse::Ok().finish()
 }
