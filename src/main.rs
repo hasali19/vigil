@@ -18,7 +18,7 @@ async fn main() -> Result<(), impl Error> {
 
     env_logger::init_from_env(Env::new().default_filter_or("info"));
 
-    let host = std::env::var("VIGIL_HTTP_HOST").unwrap_or("0.0.0.0".to_owned());
+    let host = std::env::var("VIGIL_HTTP_HOST").unwrap_or_else(|_| "0.0.0.0".to_owned());
     let port = std::env::var("VIGIL_HTTP_PORT").map_or(8080, |v| v.parse().unwrap());
 
     log::info!("Starting server at http://{}:{}", host, port);
@@ -168,8 +168,8 @@ async fn wake_host(params: Path<(i32,)>, db: Data<Db>) -> HttpResponse {
     let mut packet = [0u8; 102];
 
     // 6 bytes of 0xff...
-    for i in 0..6 {
-        packet[i] = 0xff;
+    for byte in packet.iter_mut().take(6) {
+        *byte = 0xff;
     }
 
     // ...followed by 16 repetitions of the target mac address
