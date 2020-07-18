@@ -18,8 +18,8 @@ async fn main() -> Result<(), impl Error> {
 
     env_logger::init_from_env(Env::new().default_filter_or("info"));
 
-    let host = "127.0.0.1";
-    let port = 8080;
+    let host = std::env::var("VIGIL_HTTP_HOST").unwrap_or("0.0.0.0".to_owned());
+    let port = std::env::var("VIGIL_HTTP_PORT").map_or(8080, |v| v.parse().unwrap());
 
     log::info!("Starting server at http://{}:{}", host, port);
 
