@@ -39,7 +39,7 @@ jobs:
       - name: Lint
         run: |
           cargo fmt -- --check
-          cargo clippy --all-targets --all-features --all
+          cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build and test
         run: |
