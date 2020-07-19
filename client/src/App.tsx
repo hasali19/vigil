@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import AddIcon from "@material-ui/icons/Add";
 import {
   AppBar,
+  Backdrop,
+  CircularProgress,
   Container,
   CssBaseline,
+  Fab,
   Grid,
   Toolbar,
   Typography,
@@ -10,6 +14,7 @@ import {
 } from "@material-ui/core";
 
 import HostCard from "./HostCard";
+import CreateHostDialog from "./CreateHostDialog";
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -21,6 +26,14 @@ const useStyles = makeStyles((theme) => ({
   },
   grid: {
     width: "100%",
+  },
+  fab: {
+    position: "absolute",
+    bottom: theme.spacing(3),
+    right: theme.spacing(3),
+  },
+  backdrop: {
+    zIndex: 1300,
   },
 }));
 
@@ -37,13 +50,51 @@ async function fetchHosts(): Promise<Host[]> {
   return data;
 }
 
+async function createHost(
+  name: string,
+  ipAddress: string,
+  macAddress: string
+): Promise<Host> {
+  const res = await fetch("/api/hosts", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      name: name,
+      ip_address: ipAddress,
+      mac_address: macAddress,
+    }),
+  });
+
+  return await res.json();
+}
+
 function App() {
   const classes = useStyles();
+
   const [hosts, setHosts] = useState<Host[]>();
+  const [showCreateHost, setShowCreateHost] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetchHosts().then(setHosts);
+    setLoading(true);
+    fetchHosts().then((hosts) => {
+      setHosts(hosts);
+      setLoading(false);
+    });
   }, []);
+
+  const saveHost = useCallback(
+    async (name: string, ipAddress: string, macAddress: string) => {
+      setShowCreateHost(false);
+      setLoading(true);
+      await createHost(name, ipAddress, macAddress);
+      setHosts(await fetchHosts());
+      setLoading(false);
+    },
+    []
+  );
 
   return (
     <div className={classes.root}>
@@ -72,6 +123,21 @@ function App() {
           </Grid>
         </div>
       </Container>
+      <CreateHostDialog
+        open={showCreateHost}
+        onSave={saveHost}
+        onCancel={() => setShowCreateHost(false)}
+      />
+      <Fab
+        color="secondary"
+        className={classes.fab}
+        onClick={() => setShowCreateHost(true)}
+      >
+        <AddIcon />
+      </Fab>
+      <Backdrop open={loading} className={classes.backdrop}>
+        <CircularProgress color="secondary" size={60} />
+      </Backdrop>
     </div>
   );
 }
