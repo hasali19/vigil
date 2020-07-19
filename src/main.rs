@@ -2,7 +2,7 @@ mod api;
 mod db;
 mod net;
 
-use actix_files::Files;
+use actix_files::{Files, NamedFile};
 use actix_web::middleware::{Compress, Logger};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
@@ -44,7 +44,8 @@ async fn main() -> Result<()> {
                         .route(web::delete().to(api::delete_host)),
                 )
                 .route("/api/hosts/{id}/wake", web::post().to(api::wake_host))
-                .default_service(Files::new("/", "client/build").index_file("index.html"))
+                .service(Files::new("/static", "client/build/static"))
+                .default_service(web::get().to(spa_index))
         }
     })
     .bind(format!("{}:{}", host, port))?
@@ -54,4 +55,8 @@ async fn main() -> Result<()> {
     db.close().await;
 
     Ok(())
+}
+
+async fn spa_index() -> actix_web::Result<NamedFile> {
+    Ok(NamedFile::open("client/build/index.html")?)
 }
