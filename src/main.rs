@@ -2,9 +2,10 @@ mod api;
 mod db;
 mod net;
 
-use actix_web::middleware::Logger;
+use actix_files::Files;
+use actix_web::middleware::{Compress, Logger};
 use actix_web::web::{self, Data};
-use actix_web::{App, HttpResponse, HttpServer};
+use actix_web::{App, HttpServer};
 
 use env_logger::Env;
 
@@ -29,8 +30,8 @@ async fn main() -> Result<()> {
         move || {
             App::new()
                 .wrap(Logger::default())
+                .wrap(Compress::default())
                 .app_data(Data::clone(&db))
-                .route("/", web::get().to(index))
                 .service(
                     web::resource("/api/hosts")
                         .route(web::get().to(api::get_hosts))
@@ -43,6 +44,7 @@ async fn main() -> Result<()> {
                         .route(web::delete().to(api::delete_host)),
                 )
                 .route("/api/hosts/{id}/wake", web::post().to(api::wake_host))
+                .default_service(Files::new("/", "client/build").index_file("index.html"))
         }
     })
     .bind(format!("{}:{}", host, port))?
@@ -52,8 +54,4 @@ async fn main() -> Result<()> {
     db.close().await;
 
     Ok(())
-}
-
-async fn index() -> HttpResponse {
-    HttpResponse::Ok().body("Hello, world!")
 }
