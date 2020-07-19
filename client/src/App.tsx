@@ -70,6 +70,12 @@ async function createHost(
   return await res.json();
 }
 
+async function wakeHost(id: number) {
+  await fetch(`/api/hosts/${id}/wake`, {
+    method: "POST",
+  });
+}
+
 function App() {
   const classes = useStyles();
 
@@ -117,6 +123,7 @@ function App() {
                     name={host.name}
                     ipAddress={host.ip_address}
                     macAddress={host.mac_address}
+                    onWake={() => wakeHost(host.id)}
                   />
                 </Grid>
               ))}

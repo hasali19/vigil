@@ -24,9 +24,10 @@ interface Props {
   name: string;
   ipAddress: string;
   macAddress: string;
+  onWake?: () => void;
 }
 
-function HostCard({ name, ipAddress, macAddress }: Props) {
+function HostCard({ name, ipAddress, macAddress, onWake }: Props) {
   const classes = useStyles();
   return (
     <Card className={classes.root}>
@@ -43,7 +44,9 @@ function HostCard({ name, ipAddress, macAddress }: Props) {
         </Typography>
       </CardContent>
       <CardActions>
-        <Button color="primary">Wake</Button>
+        <Button color="primary" onClick={onWake}>
+          Wake
+        </Button>
       </CardActions>
     </Card>
   );
